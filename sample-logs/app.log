@@ -1,0 +1,8 @@
+2026-06-08T09:00:01.123Z INFO sample-api web-1 request completed path=/health status=200 duration_ms=8
+2026-06-08T09:00:04.451Z INFO sample-api web-1 user login user_id=42 method=password status=success
+2026-06-08T09:00:09.870Z WARN sample-api web-2 slow query route=/api/orders duration_ms=742 query_id=orders_recent
+2026-06-08T09:00:13.002Z ERROR sample-api web-2 payment authorization failed order_id=ord_1007 provider=stripe reason=timeout
+2026-06-08T09:00:18.339Z INFO worker-queue worker-1 job indexed queue=logs.raw delivery_tag=184 attempts=1
+2026-06-08T09:00:22.514Z WARN sample-api web-3 rate limit exceeded ip=203.0.113.10 route=/api/search limit=120
+2026-06-08T09:00:28.027Z ERROR worker-queue worker-1 index retry failed index=logs-2026.06.08 attempts=2 reason=es_unavailable
+2026-06-08T09:00:35.691Z INFO sample-api web-1 request completed path=/api/dashboard status=200 duration_ms=31

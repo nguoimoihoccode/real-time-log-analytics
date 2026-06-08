@@ -1,0 +1,15 @@
+{
+  "name": "real-time-log-analytics",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/*"],
+  "scripts": {
+    "test": "npm run test --workspaces --if-present",
+    "build": "npm run build --workspaces --if-present",
+    "dev:api": "npm run start:dev -w @rtla/api",
+    "dev:worker": "npm run start:dev -w @rtla/worker",
+    "dev:agent": "npm run dev -w @rtla/agent",
+    "dev:dashboard": "npm run dev -w @rtla/dashboard"
+  },
+  "devDependencies": { "typescript": "^5.5.4" }
+}
