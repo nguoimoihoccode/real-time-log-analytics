@@ -1,30 +1,140 @@
-# Real-Time Log Analytics
+# Real-Time Log Analytics Engine
 
-MVP log analytics pipeline: a local agent tails application logs, streams normalized events through a Socket.IO API, buffers ingestion in RabbitMQ, indexes events into Elasticsearch, then visualizes live search and aggregates in a Vite dashboard.
+Portfolio-ready log analytics pipeline inspired by a compact ELK/Grafana architecture. A lightweight agent tails application logs, streams events to a NestJS ingestion API, buffers bursts through RabbitMQ, bulk-indexes into Elasticsearch, and renders live search/analytics in a React dashboard.
 
-## Architecture
+![Node.js](https://img.shields.io/badge/Node.js-TypeScript-3178c6)
+![NestJS](https://img.shields.io/badge/API-NestJS-e0234e)
+![RabbitMQ](https://img.shields.io/badge/Queue-RabbitMQ-ff6600)
+![Elasticsearch](https://img.shields.io/badge/Search-Elasticsearch-005571)
+![React](https://img.shields.io/badge/Dashboard-React-61dafb)
+![k6](https://img.shields.io/badge/Load_Test-k6-7d64ff)
+
+## Why This Project
+
+This project demonstrates core data/streaming engineering skills:
+
+- Real-time ingestion from server-side log agents.
+- Backpressure using RabbitMQ before database writes.
+- Elasticsearch mappings, full-text search, and aggregations.
+- Worker-based bulk indexing with manual ack/nack and DLQ routing.
+- Live dashboard updates with Socket.IO.
+- Load testing with k6/wrk plus CPU/RAM capture.
+
+## Architecture Diagram
+
+```mermaid
+flowchart LR
+  subgraph Server[Application Server]
+    LogFile[(app.log)]
+    Agent[Log Agent\nFile tail + retry buffer]
+    LogFile --> Agent
+  end
+
+  subgraph API[NestJS API]
+    WS[Socket.IO Gateway\nRealtime ingest]
+    HTTP[HTTP Benchmark Endpoint\nPOST /logs/ingest]
+    Query[Query API\nSearch + aggregations]
+    Memory[Health API\n/health/memory]
+  end
+
+  subgraph Queue[RabbitMQ]
+    Raw[[logs.raw\nDurable queue]]
+    DLX{{logs.dlx\nDirect exchange}}
+    DLQ[[logs.dlq\nDead-letter queue]]
+  end
+
+  subgraph Worker[Indexer Worker]
+    Consumer[Consumer\nPrefetch + manual ack]
+    Bulk[Bulk Indexer\nBatch writes]
+    Consumer --> Bulk
+  end
+
+  subgraph Search[Elasticsearch]
+    Index[(logs-YYYY.MM.DD)]
+    Aggs[Aggregations\nterms + date_histogram]
+  end
+
+  subgraph UI[React Dashboard]
+    Live[Live Log Tail]
+    Charts[Charts\nlevel/service/logs-sec]
+    SearchUI[Search + Filters]
+  end
+
+  subgraph Bench[Benchmarking]
+    K6[k6 ingest/search]
+    WRK[wrk REST pressure]
+    Stats[Docker stats + API memory]
+  end
+
+  Agent -- Socket.IO log event --> WS
+  K6 -- HTTP batches --> HTTP
+  WRK -- REST load --> Query
+  WS -- publish persistent msg --> Raw
+  HTTP -- publish persistent msg --> Raw
+  Raw --> Consumer
+  Raw -- poison / permanent failure --> DLX --> DLQ
+  Bulk --> Index
+  Query --> Index
+  Query --> Aggs
+  Index --> Aggs
+  WS -- live-log event --> Live
+  Query --> Charts
+  Query --> SearchUI
+  Memory --> Stats
+```
+
+## Data Flow
+
+1. `apps/agent` tails `sample-logs/app.log` and normalizes each line into a log event.
+2. The agent sends events to the API over Socket.IO.
+3. The API validates each event with the shared schema and publishes it to RabbitMQ `logs.raw`.
+4. RabbitMQ absorbs bursts so Elasticsearch is not hit directly by ingestion spikes.
+5. `apps/worker` consumes with prefetch, batches events, and bulk-indexes into `logs-YYYY.MM.DD`.
+6. Failed permanent messages are routed to `logs.dlq`; transient failures are requeued.
+7. The dashboard receives live logs over Socket.IO and fetches Elasticsearch-backed analytics through REST.
+
+## Tech Stack
+
+| Layer | Tech | Purpose |
+| --- | --- | --- |
+| Agent | Node.js, TypeScript, Socket.IO client | Tail log files, retry connection, stream events |
+| API | NestJS, Socket.IO, REST | Ingestion gateway, benchmark endpoint, search API |
+| Queue | RabbitMQ | Durable buffering, backpressure, DLQ |
+| Worker | Node.js, TypeScript, Elasticsearch client | Bulk indexing, ack/nack, retry routing |
+| Search | Elasticsearch | Full-text search, filters, aggregations |
+| Dashboard | React, Vite, Recharts | Live logs, charts, filters |
+| Benchmark | k6, wrk, Docker stats | Throughput, latency, CPU/RAM measurement |
+
+## Repository Layout
 
 ```text
-agent -> Socket.IO API -> RabbitMQ logs.raw -> worker -> Elasticsearch logs-* -> dashboard
+apps/
+  agent/       # file tailing + Socket.IO client
+  api/         # NestJS ingestion, query, health APIs
+  dashboard/   # React realtime dashboard
+  shared/      # log schema + parser
+  worker/      # RabbitMQ consumer + Elasticsearch bulk indexer
+benchmarks/
+  k6/          # ingest/search load tests
+  scripts/     # run-load and resource capture scripts
+infra/
+  docker-compose.yml
+  rabbitmq/definitions.json
+sample-logs/app.log
 ```
 
-- Agent tails `sample-logs/app.log` by default and connects to `http://localhost:3000` via Socket.IO.
-- API accepts realtime log events and publishes them to RabbitMQ queue `logs.raw`.
-- Worker consumes `logs.raw`, indexes documents into Elasticsearch indices named `logs-*`, and uses manual ack/nack behavior for reliability.
-- Dashboard connects to the API for live Socket.IO updates, search, and aggregation views.
-
-## Run
-
-Start infra first:
-
-```bash
-docker compose -f infra/docker-compose.yml up -d
-```
+## Quick Start
 
 Install dependencies:
 
 ```bash
 npm install
+```
+
+Start RabbitMQ and Elasticsearch:
+
+```bash
+docker compose -f infra/docker-compose.yml up -d
 ```
 
 Run services in separate terminals:
@@ -36,7 +146,20 @@ npm run dev:agent
 npm run dev:dashboard
 ```
 
-Agent defaults:
+Open:
+
+- Dashboard: http://localhost:5173
+- API: http://localhost:3000
+- RabbitMQ management: http://localhost:15672 (`guest` / `guest`)
+- Elasticsearch: http://localhost:9200
+
+Append a live log event:
+
+```bash
+printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z) INFO sample-api web-1 manual append path=/api/demo status=200 duration_ms=12" >> sample-logs/app.log
+```
+
+## Agent Defaults
 
 ```bash
 LOG_FILE=./sample-logs/app.log
@@ -44,37 +167,49 @@ SERVICE_NAME=sample-api
 BACKEND_WS_URL=http://localhost:3000
 ```
 
-## Append Log Example
+## API Endpoints
 
-Append a new sample event while the agent is running:
+| Endpoint | Purpose |
+| --- | --- |
+| `GET /health` | Basic API health |
+| `GET /health/memory` | API process memory, uptime, pid |
+| `POST /logs/ingest` | HTTP benchmark ingestion path |
+| `GET /logs/search` | Search indexed logs by time, level, service, host, text |
+| `GET /analytics/logs-per-second` | Date histogram throughput chart |
+| `GET /analytics/by-level` | Terms aggregation by log level |
+| `GET /analytics/by-service` | Terms aggregation by service |
+| Socket.IO `log` event | Realtime agent ingestion |
+| Socket.IO `live-log` event | Realtime dashboard updates |
 
-```bash
-printf '%s\n' "$(date -u +%Y-%m-%dT%H:%M:%S.000Z) INFO sample-api web-1 manual append path=/api/demo status=200 duration_ms=12" >> sample-logs/app.log
+## Reliability And Backpressure
+
+- Agent keeps a bounded retry buffer during short API disconnects.
+- API never writes Elasticsearch directly during ingestion.
+- RabbitMQ `logs.raw` is durable and uses persistent messages.
+- Worker uses `prefetch(100)` to control indexing pressure.
+- Bulk indexing acks successful items and requeues transient failures.
+- Permanent mapping/validation failures route to `logs.dlq`.
+
+## Elasticsearch Model
+
+Daily index pattern:
+
+```text
+logs-YYYY.MM.DD
 ```
 
-## Portfolio Highlights
+Core fields:
 
-- RabbitMQ backpressure: API publish detects queue pressure instead of silently dropping logs.
-- Elasticsearch search/aggregations: indexed `logs-*` data supports filtering and summary metrics.
-- Realtime Socket.IO: agent ingestion and dashboard updates avoid polling-only UX.
-- Reliability: worker retry flow uses manual ack/nack and DLQ routing for failed messages.
-
-## Useful URLs
-
-- RabbitMQ management: http://localhost:15672 (`guest` / `guest`)
-- Elasticsearch: http://localhost:9200
-- Dashboard: http://localhost:5173
-- API: http://localhost:3000
-
-## Useful Endpoints
-
-- `GET /logs/search` - search indexed logs.
-- `POST /logs/ingest` - HTTP benchmark ingestion endpoint.
-- `GET /analytics/logs-per-second` - return log throughput over time.
-- `GET /analytics/by-level` - return log counts grouped by level.
-- `GET /analytics/by-service` - return log counts grouped by service.
-- `GET /health/memory` - return API process memory and uptime.
-- Socket.IO `log` event - ingest normalized log events from the agent.
+| Field | Type | Use |
+| --- | --- | --- |
+| `timestamp` | `date` | time filtering, histograms |
+| `receivedAt` | `date` | ingestion latency checks |
+| `level` | `keyword` | filters, terms aggregation |
+| `service` | `keyword` | service filtering/charts |
+| `host` | `keyword` | host filtering |
+| `message` | `text` | full-text search |
+| `message.keyword` | `keyword` | exact matching if needed |
+| `metadata` | `object` | request IDs, status codes, durations |
 
 ## Benchmarking
 
@@ -117,20 +252,28 @@ Capture resource usage manually:
 API_URL=http://localhost:3000 ./benchmarks/scripts/collect-stats.sh
 ```
 
-Optional REST smoke pressure with `wrk`:
+Optional REST pressure with `wrk`:
 
 ```bash
 wrk -t4 -c64 -d30s 'http://localhost:3000/analytics/by-level'
 ```
 
-Read these metrics:
+Reports are written to `benchmarks/reports/`:
 
-- k6 `http_reqs` / duration: approximate request throughput.
-- k6 `http_req_duration p(95)`: p95 API latency.
-- k6 `http_req_failed`: failed request rate.
-- `benchmarks/reports/docker-stats-*.txt`: container CPU/RAM for RabbitMQ, Elasticsearch, API, worker when containerized.
-- `benchmarks/reports/api-memory-*.json`: API `rss`, `heapUsed`, `heapTotal`, `external`, `arrayBuffers`.
+- `k6-ingest-*.json`: ingest throughput, p95 latency, error rate.
+- `k6-search-*.json`: search/analytics latency and failures.
+- `docker-stats-*.txt`: container CPU/RAM snapshots.
+- `api-memory-*.json`: API `rss`, `heapUsed`, `heapTotal`, `external`, `arrayBuffers`.
+
+## Verification
+
+```bash
+npm run build
+npm test
+docker compose -f infra/docker-compose.yml config
+```
 
 ## Security / Maintenance Notes
 
-- `npm audit --audit-level=moderate` reports 8 moderate advisories. Some may be fixable with non-force `npm audit fix`; remaining advisories may require major or dependency upgrades. No force fix was used.
+- `npm audit --audit-level=moderate` reports moderate advisories in current dependencies.
+- Some fixes may require major upgrades; no forced upgrade is applied by default.
