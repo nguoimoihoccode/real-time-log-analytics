@@ -24,63 +24,16 @@ This project demonstrates core data/streaming engineering skills:
 
 ```mermaid
 flowchart LR
-  subgraph Server[Application Server]
-    LogFile[(app.log)]
-    Agent[Log Agent\nFile tail + retry buffer]
-    LogFile --> Agent
-  end
+  A[Log File] --> B[Agent]
+  B --> C[NestJS API]
+  C --> D[RabbitMQ]
+  D --> E[Worker]
+  E --> F[Elasticsearch]
+  F --> G[Dashboard]
+  G --> C
 
-  subgraph API[NestJS API]
-    WS[Socket.IO Gateway\nRealtime ingest]
-    HTTP[HTTP Benchmark Endpoint\nPOST /logs/ingest]
-    Query[Query API\nSearch + aggregations]
-    Memory[Health API\n/health/memory]
-  end
-
-  subgraph Queue[RabbitMQ]
-    Raw[[logs.raw\nDurable queue]]
-    DLX{{logs.dlx\nDirect exchange}}
-    DLQ[[logs.dlq\nDead-letter queue]]
-  end
-
-  subgraph Worker[Indexer Worker]
-    Consumer[Consumer\nPrefetch + manual ack]
-    Bulk[Bulk Indexer\nBatch writes]
-    Consumer --> Bulk
-  end
-
-  subgraph Search[Elasticsearch]
-    Index[(logs-YYYY.MM.DD)]
-    Aggs[Aggregations\nterms + date_histogram]
-  end
-
-  subgraph UI[React Dashboard]
-    Live[Live Log Tail]
-    Charts[Charts\nlevel/service/logs-sec]
-    SearchUI[Search + Filters]
-  end
-
-  subgraph Bench[Benchmarking]
-    K6[k6 ingest/search]
-    WRK[wrk REST pressure]
-    Stats[Docker stats + API memory]
-  end
-
-  Agent -- Socket.IO log event --> WS
-  K6 -- HTTP batches --> HTTP
-  WRK -- REST load --> Query
-  WS -- publish persistent msg --> Raw
-  HTTP -- publish persistent msg --> Raw
-  Raw --> Consumer
-  Raw -- poison / permanent failure --> DLX --> DLQ
-  Bulk --> Index
-  Query --> Index
-  Query --> Aggs
-  Index --> Aggs
-  WS -- live-log event --> Live
-  Query --> Charts
-  Query --> SearchUI
-  Memory --> Stats
+  H[k6 / wrk] --> C
+  C --> I[Memory / Docker Stats]
 ```
 
 ## Data Flow
